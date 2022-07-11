@@ -4,6 +4,11 @@ import datetime
 import time
 import yaml
 import symbol_list as SL
+from numpy import diff
+import pandas as pd
+import all_companys_list as COM ####### 종목 코드 리스트
+from tqdm import tqdm ####### 진행률 표시 - for문에 사용
+import openpyxl
 
 with open('config.yaml', encoding='UTF-8') as f:
     _cfg = yaml.load(f, Loader=yaml.FullLoader)
@@ -50,6 +55,15 @@ def hashkey(datas):
     hashkey = res.json()["HASH"]
     return hashkey
 
+def get_symbol_list(symbol_list):
+    symbol_list_temp = []
+    for sym in symbol_list:
+        yday_start = get_start_price(sym,1)    ## 전일 시가 조회
+        today_start = get_start_price(sym,0)    ## 당일 시가 조회
+        if int(today_start-yday_start) > 0:
+            symbol_list_temp.append(sym)
+    return symbol_list_temp
+
 def get_current_price(code="005930"):
     """현재가 조회"""
     PATH = "uapi/domestic-stock/v1/quotations/inquire-price"
@@ -82,11 +96,31 @@ def get_target_price(code="005930"):
     "fid_period_div_code":"D"
     }
     res = requests.get(URL, headers=headers, params=params)
-    stck_oprc = int(res.json()['output'][0]['stck_oprc']) #오늘 시가
+    #stck_oprc = int(res.json()['output'][0]['stck_oprc']) #오늘 시가
+    #stck_lwpr = int(res.json()['output'][1]['stck_lwpr']) #전일 저가
     stck_hgpr = int(res.json()['output'][1]['stck_hgpr']) #전일 고가
-    stck_lwpr = int(res.json()['output'][1]['stck_lwpr']) #전일 저가
-    target_price = stck_oprc + (stck_hgpr - stck_lwpr) * K
+    target_price = stck_hgpr
     return target_price
+
+def get_start_price(code="005930",day=0):
+    """시가 조회"""
+    PATH = "uapi/domestic-stock/v1/quotations/inquire-daily-price"
+    URL = f"{URL_BASE}/{PATH}"
+    headers = {"Content-Type":"application/json", 
+        "authorization": f"Bearer {ACCESS_TOKEN}",
+        "appKey":APP_KEY,
+        "appSecret":APP_SECRET,
+        "tr_id":"FHKST01010400"}
+    params = {
+    "fid_cond_mrkt_div_code":"J",
+    "fid_input_iscd":code,
+    "fid_org_adj_prc":"1",
+    "fid_period_div_code":"D"
+    }
+    res = requests.get(URL, headers=headers, params=params)
+    stck_oprc = int(res.json()['output'][day]['stck_oprc']) # day : 1 => 전일 시가 // 0 => 오늘 시가
+    start_price = stck_oprc
+    return start_price
 
 def get_stock_balance():
     """주식 잔고조회"""
@@ -215,7 +249,7 @@ def sell(code="005930", qty="1"):
 # 자동매매 시작
 try:
     ACCESS_TOKEN = get_access_token()
-    symbol_list = SYMBOL_LIST # 매수 희망 종목 리스트
+    symbol_list = get_symbol_list(SYMBOL_LIST) # 매수 희망 종목 리스트
     print(symbol_list)
     bought_list = [] # 매수 완료된 종목 리스트
     total_cash = get_balance() # 보유 현금 조회
@@ -224,12 +258,11 @@ try:
     for sym in stock_dict.keys():
         bought_list.append(sym)
     target_buy_count = len(symbol_list) # 매수할 종목 수
-    #buy_percent = 1/len(symbol_list) # 종목당 매수 금액 비율
-    buy_percent = 0.5 # 종목당 매수 금액 비율
+    buy_percent = 1/len(symbol_list) # 종목당 매수 금액 비율
     buy_amount = total_cash * buy_percent  # 종목별 주문 금액 계산
     soldout = False
 
-    send_message("===국내 주식 자동매매 프로그램을 시작합니다===")
+    send_message("===국내 주식 총 모양 자동매매 프로그램을 시작합니다===")
     while True:
         t_now = datetime.datetime.now()
         t_9 = t_now.replace(hour=9, minute=0, second=0, microsecond=0)
